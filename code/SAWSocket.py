@@ -15,8 +15,9 @@ BufSize = 1024
 DEBUG = True
 
 class SAWSocket:
-	def __init__(self,  port, addr = ''):			# addr == '' if server
+	def __init__(self, w, port, addr = ''):			# addr == '' if server
 		self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+		self.w = w
 		if(addr == ''):		# Server side
 			self.isServer = True
 			self.PeerAddr = ''

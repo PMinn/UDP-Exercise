@@ -11,7 +11,7 @@ BUF_Size = 1024
 
 def main():
 	# Create a SAWSocket Server 
-	server = SAWSocket.SAWSocket(8888)		# Listen on port 8888
+	server = SAWSocket.SAWSocket(2, 8888)		# Listen on port 8888
 	server.accept()
 	
 	for i in range(10):
