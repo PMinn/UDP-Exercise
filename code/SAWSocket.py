@@ -18,6 +18,7 @@ class SAWSocket:
 	def __init__(self, w, port, addr = ''):			# addr == '' if server
 		self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 		self.w = w
+		self.slidingWindows = 2*w
 		if(addr == ''):		# Server side
 			self.isServer = True
 			self.PeerAddr = ''
@@ -32,6 +33,12 @@ class SAWSocket:
 
 		# Variables share between process and daemon
 		# these variable must be accessed in the critical section
+		self.CS_buffers = []
+		for i in range(self.slidingWindows):
+			self.CS_buffers.append({
+				'buf':b'',
+				'hasData':False
+			})
 		self.CS_busy = False		# True if CS_buf contains data
 		self.CS_sn_send = 0		# sequence number for send DATA 
 		self.CS_sn_receive = 0	# sequence number for next DATA
@@ -62,10 +69,16 @@ class SAWSocket:
 		self.lock.release()
 		return sn_send
 	# end of get_sn_send()
-	
+
+	def set_sn_send(self, CS_sn_send):
+		self.lock.acquire()
+		self.CS_sn_send = CS_sn_send
+		self.lock.release()
+	# end of set_sn_send()
+
 	def add_sn_receive(self):
 		self.lock.acquire()
-		self.CS_sn_receive = (self.CS_sn_receive + 1) % 2
+		self.CS_sn_receive = (self.CS_sn_receive + 1) % self.slidingWindows
 		sn_receive = self.CS_sn_receive
 		self.lock.release()
 		return sn_receive
@@ -73,7 +86,7 @@ class SAWSocket:
 	
 	def add_sn_send(self):
 		self.lock.acquire()
-		self.CS_sn_send = (self.CS_sn_send + 1) % 2
+		self.CS_sn_send = (self.CS_sn_send + 1) % self.slidingWindows
 		sn_send = self.CS_sn_send
 		self.lock.release()
 		return sn_send
@@ -101,16 +114,25 @@ class SAWSocket:
 		return busy
 	# end of has_data()
 	
-	def copy2CS_buf(self, src_buf):
+	def copy2CS_buf(self, src_buf, msg_sn):
 		self.lock.acquire()
-		self.CS_buf = src_buf
-		self.CS_busy = True
+		self.CS_buffers[msg_sn]['data'] = src_buf
+		self.CS_buffers[msg_sn]['hasData'] = True
+		startSn = (msg_sn // self.w) * self.w
+		dataFull = True
+		for i in range(startSn,startSn+3):
+			dataFull &= self.CS_buffers[i]['hasData']
+		if dataFull:
+			self.CS_busy = True
 		self.lock.release()
 	# end of copy2CS_buf()
 	
 	def copy4CS_buf(self):
+		startSn = (self.get_sn_send() // self.w) * self.w
+		ret_msg = b""
 		self.lock.acquire()
-		ret_msg = self.CS_buf
+		for i in range(startSn,startSn+self.w):
+			ret_msg += self.CS_buffers[i]['data']
 		self.CS_busy = False
 		self.lock.release()
 		return ret_msg
@@ -199,19 +221,23 @@ class SAWSocket:
 		s = struct.Struct(msg_format)
 		packed_data = s.pack(*value)
 		
-		success = False
-		while(not success):
-			# send message
-			self.socket.sendto(packed_data, (self.PeerAddr, self.PeerPort))
+		self.socket.sendto(packed_data, (self.PeerAddr, self.PeerPort))
+		print("send:")
+		print(buf)
+		self.add_sn_send()
+		# success = False
+		# while(not success):
+		# 	# send message
+		# 	self.socket.sendto(packed_data, (self.PeerAddr, self.PeerPort))
 
-			# wait ACK
-			self.wait_ack()
+		# 	# wait ACK
+		# 	self.wait_ack()
 			
-			ack_sn = self.get_ack_sn()
-			if(ack_sn != sn_send):
-				success = True
-			elif(DEBUG):
-				print('Send failed !! SN = ' + str(sn_send))
+		# 	ack_sn = self.get_ack_sn()
+		# 	if(ack_sn != sn_send):
+		# 		success = True
+		# 	elif(DEBUG):
+		# 		print('Send failed !! SN = ' + str(sn_send))
 		# end while
 	# end of send()
 	
@@ -264,27 +290,22 @@ class ReceiveD(threading.Thread):
 			msg_value = (data[2], )
 			s = struct.Struct(msg_format2)
 			msg_msg = s.pack(*msg_value)
-			
 			if(msg_type == ord('M')):
-				if(msg_sn == self.data.get_sn_receive()):		# receive a new message
-					while(self.data.has_data()):							# data still in CS_buf
-						time.sleep(self.data.SleepIdle)
-				
-					self.data.copy2CS_buf(msg_msg)
-					self.data.data_ready()									# notify
-					msg_sn = (msg_sn + 1) % 2						# for acknowledgement
-				elif(DEBUG):
-					print('Duplicate message. SN = ' + str(msg_sn))
-				# This program does not consider the case that the system lost the ACK message.
-				# if (msg_sn != self.data.get_sn_receive()), this is a reply message
-				# 		 that is, sender losts the previous acknowledgement message
-				
-				# Reply ACK
-				msg_format1 = '!' + 'B I ' 				# !: network order
-				s = struct.Struct(msg_format1)
-				value = (ord('A'), msg_sn)
-				packed_data = s.pack(*value)
-				self.socket.sendto(packed_data, (self.peerAddr, self.peerPort))
+				self.data.copy2CS_buf(msg_msg, msg_sn)
+				if self.data.get_sn_send() // self.data.w != msg_sn // self.data.w:
+					pass # out of window
+				self.data.set_sn_send(msg_sn)
+				if self.data.has_data():
+					self.data.data_ready()
+					print("ready")									# notify
+				msg_sn = (msg_sn + 1) % self.data.slidingWindows						# for acknowledgement
+				if msg_sn % self.data.w == 0:
+					msg_format1 = '!' + 'B I ' 				# !: network order
+					s = struct.Struct(msg_format1)
+					value = (ord('A'), msg_sn)
+					packed_data = s.pack(*value)
+					self.socket.sendto(packed_data, (self.peerAddr, self.peerPort))
+					print("Reply ACK")
 			elif(msg_type == ord('A')):
 				if(msg_sn != self.data.get_sn_send()):
 					self.data.receive_ack(msg_sn)

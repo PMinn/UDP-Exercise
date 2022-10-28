@@ -14,11 +14,11 @@ def main():
 	client = SAWSocket.SAWSocket(2, PORT, "127.0.0.1")
 	client.connect()
 	
-	for i in range(10):
+	for i in range(3):
 		msg = 'Test message ' + str(i)
 		client.send(msg.encode('utf-8'))
 
-	client.close()
+	# client.close()
 
 # end of main
 
