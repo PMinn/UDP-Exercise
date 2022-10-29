@@ -120,7 +120,7 @@ class SAWSocket:
 		self.CS_buffers[msg_sn]['hasData'] = True
 		startSn = (msg_sn // self.w) * self.w
 		dataFull = True
-		for i in range(startSn,startSn+3):
+		for i in range(startSn,startSn+self.w):
 			dataFull &= self.CS_buffers[i]['hasData']
 		if dataFull:
 			self.CS_busy = True
@@ -220,24 +220,30 @@ class SAWSocket:
 		msg_format = '!' + 'B I ' + str(length) + 's'
 		s = struct.Struct(msg_format)
 		packed_data = s.pack(*value)
-		
+		self.copy2CS_buf(packed_data, sn_send)
 		self.socket.sendto(packed_data, (self.PeerAddr, self.PeerPort))
-		print("send:")
-		print(buf)
-		self.add_sn_send()
-		# success = False
-		# while(not success):
-		# 	# send message
-		# 	self.socket.sendto(packed_data, (self.PeerAddr, self.PeerPort))
+		# if sn_send % self.w == self.w - 1:
+		# 	success = False
+		# 	while(not success):
+		# 		# wait ACK
+		# 		self.wait_ack()
+		# 		ack_sn = self.get_ack_sn()
 
-		# 	# wait ACK
-		# 	self.wait_ack()
-			
-		# 	ack_sn = self.get_ack_sn()
-		# 	if(ack_sn != sn_send):
-		# 		success = True
-		# 	elif(DEBUG):
-		# 		print('Send failed !! SN = ' + str(sn_send))
+		# 		if ack_sn % self.w == 0:
+		# 			success = True
+		# 		else:
+		# 			self.socket.sendto(self.copy4CS_buf(), (self.PeerAddr, self.PeerPort))
+			# print("send:")
+			# 
+
+			# 	# send message
+			# 	self.socket.sendto(packed_data, (self.PeerAddr, self.PeerPort))
+
+			# 	if(ack_sn != sn_send):
+			# 		
+			# 	elif(DEBUG):
+			# 		print('Send failed !! SN = ' + str(sn_send))
+		self.add_sn_send()
 		# end while
 	# end of send()
 	
@@ -296,9 +302,8 @@ class ReceiveD(threading.Thread):
 					pass # out of window
 				self.data.set_sn_send(msg_sn)
 				if self.data.has_data():
-					self.data.data_ready()
-					print("ready")									# notify
-				msg_sn = (msg_sn + 1) % self.data.slidingWindows						# for acknowledgement
+					self.data.data_ready() # notify
+				msg_sn = (msg_sn + 1) % self.data.slidingWindows # for acknowledgement
 				if msg_sn % self.data.w == 0:
 					msg_format1 = '!' + 'B I ' 				# !: network order
 					s = struct.Struct(msg_format1)
@@ -307,10 +312,11 @@ class ReceiveD(threading.Thread):
 					self.socket.sendto(packed_data, (self.peerAddr, self.peerPort))
 					print("Reply ACK")
 			elif(msg_type == ord('A')):
-				if(msg_sn != self.data.get_sn_send()):
+				if(msg_sn == self.data.get_sn_send()):
 					self.data.receive_ack(msg_sn)
-					self.data.add_sn_send()
-				elif(DEBUG):
+					# self.data.add_sn_send()
+				else:
+					self.socket.sendto(self.copy4CS_buf(), (self.PeerAddr, self.PeerPort))
 					print('Duplicate ACK. SN = ' + str(msg_sn))
 			elif(msg_type == ord('F')):
 				# Reply ACK
@@ -327,7 +333,3 @@ class ReceiveD(threading.Thread):
 			print('Receive daemon closed()')
 	# end of run()
 # end of class ReceiveD
-
-if __name__ == '__main__':
-	print('Hello!!')
-
