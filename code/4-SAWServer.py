@@ -1,8 +1,5 @@
 ####################################################
-#  Network Programming - Unit 5  User Datagram Protocol          
-#  Program Name: 4-SAWServer.py                                      			
-#  This program builds a server based on SAWSocket.           		
-#  2021.07.21                                                 									
+#  D1014636 潘子珉                                      									
 ####################################################
 import SAWSocket
 
