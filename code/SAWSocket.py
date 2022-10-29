@@ -116,7 +116,7 @@ class SAWSocket:
 	
 	def copy2CS_buf(self, src_buf, msg_sn):
 		self.lock.acquire()
-		self.CS_buffers[msg_sn]['data'] = src_buf
+		self.CS_buffers[msg_sn]['buf'] = src_buf
 		self.CS_buffers[msg_sn]['hasData'] = True
 		startSn = (msg_sn // self.w) * self.w
 		dataFull = True
@@ -132,7 +132,8 @@ class SAWSocket:
 		ret_msg = b""
 		self.lock.acquire()
 		for i in range(startSn,startSn+self.w):
-			ret_msg += self.CS_buffers[i]['data']
+			ret_msg += self.CS_buffers[i]['buf']
+			self.CS_buffers[i]['hasData'] = False
 		self.CS_busy = False
 		self.lock.release()
 		return ret_msg
@@ -222,13 +223,14 @@ class SAWSocket:
 		packed_data = s.pack(*value)
 		self.copy2CS_buf(packed_data, sn_send)
 		self.socket.sendto(packed_data, (self.PeerAddr, self.PeerPort))
-		# if sn_send % self.w == self.w - 1:
+		if sn_send % self.w == self.w - 1:
 		# 	success = False
 		# 	while(not success):
-		# 		# wait ACK
-		# 		self.wait_ack()
-		# 		ack_sn = self.get_ack_sn()
-
+			# wait ACK
+			self.wait_ack()
+			ack_sn = self.get_ack_sn()
+			print("get sn:"+str(ack_sn))
+			# self.set_sn_send(ack_sn)
 		# 		if ack_sn % self.w == 0:
 		# 			success = True
 		# 		else:
@@ -257,6 +259,9 @@ class SAWSocket:
 	# end of receive()
 	
 	def close(self):
+		self.lock.acquire()
+		self.CS_running = False
+		self.lock.release()
 		# Send Finish
 		sn = self.get_sn_send()
 		msg_format1 = '!' + 'B I ' 				# !: network order
@@ -264,7 +269,7 @@ class SAWSocket:
 		value = (ord('F'), sn)
 		packed_data = s.pack(*value)
 		self.socket.sendto(packed_data, (self.PeerAddr, self.PeerPort))	
-		self.CS_running = False
+		
 		time.sleep(1)
 		self.socket.close()
 		self.ReceiveD.join()						# Waiting receive daemon closed
@@ -310,13 +315,14 @@ class ReceiveD(threading.Thread):
 					value = (ord('A'), msg_sn)
 					packed_data = s.pack(*value)
 					self.socket.sendto(packed_data, (self.peerAddr, self.peerPort))
-					print("Reply ACK")
+					print("Reply ACK:"+str(msg_sn))
 			elif(msg_type == ord('A')):
-				if(msg_sn == self.data.get_sn_send()):
+				print("get sn:" + str(msg_sn) +', send sn before:' + str(self.data.get_sn_send()))
+				if msg_sn % self.data.w == 0:
 					self.data.receive_ack(msg_sn)
 					# self.data.add_sn_send()
 				else:
-					self.socket.sendto(self.copy4CS_buf(), (self.PeerAddr, self.PeerPort))
+					self.socket.sendto(self.data.copy4CS_buf(), (self.peerAddr, self.peerPort))
 					print('Duplicate ACK. SN = ' + str(msg_sn))
 			elif(msg_type == ord('F')):
 				# Reply ACK
@@ -325,6 +331,7 @@ class ReceiveD(threading.Thread):
 				value = (ord('A'), msg_sn)
 				packed_data = s.pack(*value)
 				self.socket.sendto(packed_data, (self.peerAddr, self.peerPort))
+				time.sleep(0.1)
 			else:
 				if(DEBUG):
 					print('Message error. SN = ' + str(msg_sn))
