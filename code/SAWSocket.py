@@ -11,6 +11,11 @@ import random
 BufSize = 1024
 DEBUG = True
 
+class timeout(socket.timeout):
+    def __init__(self):
+        super().__init__()
+
+
 class SAWSocket:
 	def __init__(self, w, port, addr = ''):			# addr == '' if server
 		self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -149,8 +154,9 @@ class SAWSocket:
 		ret_msg = b""
 		self.lock.acquire()
 		for i in range(startSn,startSn+self.w):
-			ret_msg += self.CS_buffers[i]['buf']
-			self.CS_buffers[i]['hasData'] = False
+			if self.CS_buffers[i]['hasData']:
+				ret_msg += self.CS_buffers[i]['buf']
+				self.CS_buffers[i]['hasData'] = False
 		# self.CS_busy = False
 		self.lock.release()
 		return ret_msg
@@ -278,12 +284,16 @@ class SAWSocket:
 		print("receive: "+str(sn))
 		if(not self.has_data()):
 			self.wait_data()
-		ret_msg = self.copy4CS_buf()
-		self.add_sn_receive()
+		if self.is_running:
+			ret_msg = self.copy4CS_buf()
+			self.add_sn_receive()
+		else:
+			raise Exception()
 		return ret_msg
 	# end of receive()
 	
 	def close(self):
+		print("close")
 		self.lock.acquire()
 		self.CS_running = False
 		self.lock.release()
@@ -314,11 +324,12 @@ class ReceiveD(threading.Thread):
 	def run(self):
 		while(self.data.is_running()):
 			# Receive a message		
-			self.socket.settimeout(0.2)
 			# print("run in")
+			self.data.socket.settimeout(0.2)
 			try:
 				recv_msg, (rip, rport) = self.socket.recvfrom(self.data.BufSize)
 			except socket.timeout:
+				print("timeout inner")
 				if self.data.isServer:
 					msg_format1 = '!' + 'B I ' 				# !: network order
 					msg_sn = self.data.get_sn_send()
@@ -332,6 +343,7 @@ class ReceiveD(threading.Thread):
 					packed_data = s.pack(*value)
 					self.socket.sendto(packed_data, (self.peerAddr, self.peerPort))
 				continue
+
 			# print("run out")
 			length = len(recv_msg) - 5
 			msg_format1 = '!' + 'B I ' + str(length) + 's'				# !: network order
@@ -377,6 +389,7 @@ class ReceiveD(threading.Thread):
 					else:
 						print('no pack: ' + str(msg_sn))
 			elif(msg_type == ord('F')):
+				print("FFFFFF")
 				# Reply ACK
 				msg_format1 = '!' + 'B I ' 				# !: network order
 				s = struct.Struct(msg_format1)
@@ -392,5 +405,6 @@ class ReceiveD(threading.Thread):
 		# end of while
 		if(DEBUG):
 			print('Receive daemon closed()')
+		self.data.data_ready()
 	# end of run()
 # end of class ReceiveD

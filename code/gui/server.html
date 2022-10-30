@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Server</title>
+    <script type="text/javascript" src="/eel.js"></script>
+    <style>
+        body {
+            margin: 0;
+        }
+
+        .form {
+            width: 100vw;
+            height: 100px;
+            background: rgb(105, 88, 254);
+            background: linear-gradient(38deg, rgba(105, 88, 254, 1) 0%, rgba(176, 108, 255, 1) 100%);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .inputGroup {
+            width: 80vw;
+            position: relative;
+            margin: 2vh auto;
+        }
+
+        input {
+            height: 30px;
+            line-height: 30px;
+            font-size: 1rem;
+            border-radius: 5px;
+            border: 0;
+            width: 70vw;
+            padding: 0 2vw;
+            margin: 0 auto;
+            outline: 0;
+        }
+
+        label {
+            position: absolute;
+            left: 2vw;
+            height: 30px;
+            line-height: 30px;
+            font-size: 1rem;
+            color: rgb(146, 146, 146);
+            opacity: 1;
+            transition: opacity 0.2s;
+        }
+
+        input:focus~label,
+        input:not(:placeholder-shown)~label {
+            opacity: 0;
+        }
+
+        #creatingBtn {
+            border: 0;
+            background-color: transparent;
+            color: #fff;
+            text-align: center;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+
+        #creatingBtn:disabled {
+            opacity: 0;
+        }
+
+        #container {
+            height: calc(100vh - 100px);
+            width: 100vw;
+            overflow: auto;
+        }
+
+        #container::-webkit-scrollbar {
+            width: 8px;
+            background-color: #fff;
+        }
+
+        #container::-webkit-scrollbar-thumb {
+            background: rgb(143, 143, 143);
+            border-radius: 13px;
+        }
+
+        .li {
+            padding: 13px 0;
+            margin: 0 auto;
+            width: 80%;
+            border-bottom: 1px #cecece solid;
+        }
+
+        .li .code {
+            font-size: 1.2rem;
+            font-weight: 600;
+            width: 5.5rem;
+            height: 1.6rem;
+            line-height: 1.6rem;
+            border-radius: 10px;
+            border: 2px solid;
+            display: inline-block;
+            text-align: center;
+            margin-right: 5vw;
+        }
+
+        .li .code.recv {
+            color: #65C000;
+            border-color: #65C000;
+        }
+
+        .li .code.timeout {
+            color: #FF5719;
+            border-color: #FF5719;
+        }
+
+        .ip {
+            position: absolute;
+            right: 0;
+            height: calc(1.6rem + 4px);
+            line-height: calc(1.6rem + 4px);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="form">
+        <div class="groupGroup">
+            <div class="inputGroup">
+                <input type="number" id="slidingWindow" placeholder=" " required value="5">
+                <label for="slidingWindow">sliding window</label>
+            </div>
+            <div class="inputGroup">
+                <input type="number" id="numberOfPack" placeholder=" " required value="15">
+                <label for="numberOfPack">接收封包數</label>
+            </div>
+        </div>
+        <button id="creatingBtn">建立</button>
+    </div>
+    <div id="container"></div>
+    <script>
+        const container = document.getElementById('container');
+        const slidingWindow = document.getElementById('slidingWindow');
+        const numberOfPack = document.getElementById('numberOfPack');
+        const creatingBtn = document.getElementById('creatingBtn');
+
+        creatingBtn.addEventListener('click', () => {
+            eel.main(parseInt(slidingWindow.value), parseInt(numberOfPack.value));
+            creatingBtn.disabled = true;
+        })
+
+        slidingWindow.addEventListener('change', function () {
+            numberOfPack.value = parseInt(this.value) * 3
+        })
+
+        eel.expose(writeServerMessage);
+        function writeServerMessage(msg, ip) {
+            var li = document.createElement('div');
+            li.classList.add('li');
+            li.innerHTML = `<span class="code recv">recv</span>data: ${msg}<span class="ip">${ip}</span>`;
+            container.appendChild(li);
+        }
+    </script>
+</body>
+
+</html>
