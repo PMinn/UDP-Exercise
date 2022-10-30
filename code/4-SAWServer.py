@@ -7,10 +7,10 @@ PORT = 8888
 BUF_Size = 1024
 
 # Create a SAWSocket Server 
-server = SAWSocket.SAWSocket(4, 8888)		# Listen on port 8888
+server = SAWSocket.SAWSocket(3, 8888)		# Listen on port 8888
 server.accept()
 	
-for i in range(100):
+for i in range(10):
 	msg = server.receive()
 	print('Receive message: ' + msg.decode('utf-8'))
 	

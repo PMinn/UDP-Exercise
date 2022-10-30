@@ -53,6 +53,15 @@ class SAWSocket:
 		self.ReceiveD = 0						# receive daemon
 	# end of __init__()
 	
+	def print_CS_buffers(self):
+		print("------------")
+		self.lock.acquire()
+		for buffer in self.CS_buffers:
+			print(buffer['hasData'])
+		self.lock.release()
+		print("------------")
+	# end of print_CS_buffers()
+
 	def get_sn_receive(self):
 		self.lock.acquire()
 		sn_receive = self.CS_sn_receive
@@ -105,8 +114,12 @@ class SAWSocket:
 	# end of get_ack_sn()
 	
 	def has_data(self):
+		sn = self.get_sn_send()
+		start_sn = (sn // self.w) * self.w
+		busy = True
 		self.lock.acquire()
-		busy = self.CS_busy
+		for i in range(start_sn, start_sn+self.w):
+			busy &= self.CS_buffers[i]['hasData']
 		self.lock.release()
 		return busy
 	# end of has_data()
@@ -115,12 +128,19 @@ class SAWSocket:
 		self.lock.acquire()
 		self.CS_buffers[msg_sn]['buf'] = src_buf
 		self.CS_buffers[msg_sn]['hasData'] = True
-		startSn = (msg_sn // self.w) * self.w
-		dataFull = True
-		for i in range(startSn,startSn+self.w):
-			dataFull &= self.CS_buffers[i]['hasData']
-		if dataFull:
-			self.CS_busy = True
+		# startSn = (msg_sn // self.w) * self.w
+		# dataFull = True
+		# for i in range(startSn,startSn+self.w):
+		# 	dataFull &= self.CS_buffers[i]['hasData']
+		# if dataFull:
+		# 	self.CS_busy = True
+		self.lock.release()
+	# end of copy2CS_buf()
+
+	def clearCS_buf(self, star_sn):
+		self.lock.acquire()
+		for i in range(star_sn, star_sn + self.w):
+			self.CS_buffers[i]['hasData'] = False
 		self.lock.release()
 	# end of copy2CS_buf()
 	
@@ -131,12 +151,19 @@ class SAWSocket:
 		for i in range(startSn,startSn+self.w):
 			ret_msg += self.CS_buffers[i]['buf']
 			self.CS_buffers[i]['hasData'] = False
-		self.CS_busy = False
+		# self.CS_busy = False
 		self.lock.release()
 		return ret_msg
 	# end of copy4CS_buf()
 	
-	def  wait_data(self):
+	def get4CS_buf(self, index):
+		self.lock.acquire()
+		ret_msg = self.CS_buffers[index]['buf']
+		self.lock.release()
+		return ret_msg
+	# end of get4CS_buf()
+
+	def wait_data(self):
 		with self.condition:
 			self.condition.wait()
 	# end of wait_data()
@@ -248,6 +275,7 @@ class SAWSocket:
 	
 	def receive(self):
 		sn = self.get_sn_receive()
+		print("receive: "+str(sn))
 		if(not self.has_data()):
 			self.wait_data()
 		ret_msg = self.copy4CS_buf()
@@ -265,8 +293,7 @@ class SAWSocket:
 		s = struct.Struct(msg_format1)
 		value = (ord('F'), sn)
 		packed_data = s.pack(*value)
-		self.socket.sendto(packed_data, (self.PeerAddr, self.PeerPort))	
-		
+		self.socket.sendto(packed_data, (self.PeerAddr, self.PeerPort))
 		time.sleep(1)
 		self.socket.close()
 		self.ReceiveD.join()						# Waiting receive daemon closed
@@ -286,8 +313,26 @@ class ReceiveD(threading.Thread):
 	
 	def run(self):
 		while(self.data.is_running()):
-			# Receive a message			
-			recv_msg, (rip, rport) = self.socket.recvfrom(self.data.BufSize)
+			# Receive a message		
+			self.socket.settimeout(0.2)
+			# print("run in")
+			try:
+				recv_msg, (rip, rport) = self.socket.recvfrom(self.data.BufSize)
+			except socket.timeout:
+				if self.data.isServer:
+					msg_format1 = '!' + 'B I ' 				# !: network order
+					msg_sn = self.data.get_sn_send()
+					startSn = (msg_sn // self.data.w) * self.data.w
+					for i in range(startSn, startSn+self.data.w):
+						if not self.data.CS_buffers[i]['hasData']:
+							msg_sn = i
+							break
+					s = struct.Struct(msg_format1)
+					value = (ord('A'), msg_sn)
+					packed_data = s.pack(*value)
+					self.socket.sendto(packed_data, (self.peerAddr, self.peerPort))
+				continue
+			# print("run out")
 			length = len(recv_msg) - 5
 			msg_format1 = '!' + 'B I ' + str(length) + 's'				# !: network order
 			msg_format2 = '!' + str(length) + 's'
@@ -303,8 +348,13 @@ class ReceiveD(threading.Thread):
 				if self.data.get_sn_send() // self.data.w != msg_sn // self.data.w:
 					pass # out of window
 				self.data.set_sn_send(msg_sn)
-				if self.data.has_data():
+				# print("set sn:" + str(msg_sn))
+				hasData = self.data.has_data()
+				print(hasData)
+				if hasData:
 					self.data.data_ready() # notify
+				print("sn:"+str(msg_sn))
+				# self.data.print_CS_buffers()
 				msg_sn = (msg_sn + 1) % self.data.slidingWindows # for acknowledgement
 				if msg_sn % self.data.w == 0:
 					msg_format1 = '!' + 'B I ' 				# !: network order
@@ -314,13 +364,18 @@ class ReceiveD(threading.Thread):
 					self.socket.sendto(packed_data, (self.peerAddr, self.peerPort))
 					print("Reply ACK:"+str(msg_sn))
 			elif(msg_type == ord('A')):
-				print("get sn:" + str(msg_sn) +', send sn before:' + str(self.data.get_sn_send()))
+				sn_send = self.data.get_sn_send()
+				# print("get sn:" + str(msg_sn) +', send sn before:' + str(sn_send))
 				if msg_sn % self.data.w == 0:
 					self.data.receive_ack(msg_sn)
 					# self.data.add_sn_send()
+					self.data.clearCS_buf((sn_send // self.data.w) * self.data.w)
 				else:
-					self.socket.sendto(self.data.copy4CS_buf(), (self.peerAddr, self.peerPort))
-					print('Duplicate ACK. SN = ' + str(msg_sn))
+					if self.data.CS_buffers[msg_sn]['hasData']:
+						self.socket.sendto(self.data.get4CS_buf(msg_sn), (self.peerAddr, self.peerPort))
+						print('lose pack: ' + str(msg_sn))
+					else:
+						print('no pack: ' + str(msg_sn))
 			elif(msg_type == ord('F')):
 				# Reply ACK
 				msg_format1 = '!' + 'B I ' 				# !: network order
@@ -328,7 +383,9 @@ class ReceiveD(threading.Thread):
 				value = (ord('A'), msg_sn)
 				packed_data = s.pack(*value)
 				self.socket.sendto(packed_data, (self.peerAddr, self.peerPort))
-				time.sleep(0.1)
+				self.data.lock.acquire()
+				self.data.CS_running = False
+				self.data.lock.release()
 			else:
 				if(DEBUG):
 					print('Message error. SN = ' + str(msg_sn))
